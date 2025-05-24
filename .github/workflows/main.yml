@@ -1,0 +1,68 @@
+name: Build r8152.ko for ASUS ROG Phone 5 (AOSP Clang)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential bc bison flex libssl-dev \
+            libncurses-dev libelf-dev cpio unzip git wget lld
+
+      - name: Clone ASUS kernel source
+        run: |
+          git clone --depth=1 https://github.com/Skywalker-I005/ASUS_I005_1-kernel.git kernel
+
+      - name: Extract kernel config
+        run: |
+          zcat config.gz > kernel/.config
+
+      - name: Patch .config to disable KGDB and debug options
+        run: |
+          sed -i 's/^CONFIG_KGDB=y/# CONFIG_KGDB is not set/' kernel/.config || true
+          sed -i 's/^CONFIG_KGDB=/CONFIG_KGDB=n/' kernel/.config || true
+          sed -i 's/^CONFIG_DEBUG_KERNEL=y/# CONFIG_DEBUG_KERNEL is not set/' kernel/.config || true
+          sed -i 's/^CONFIG_DEBUG_INFO=y/# CONFIG_DEBUG_INFO is not set/' kernel/.config || true
+
+      - name: Clone AOSP Clang toolchain (r416183b)
+        run: |
+          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 toolchain
+
+      - name: Prepare kernel source with AOSP Clang
+        run: |
+          export ARCH=arm64
+          export PATH=$GITHUB_WORKSPACE/toolchain/clang-r416183b/bin:$PATH
+          export CC=clang
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export LLVM=1
+          export LLVM_IAS=1
+          make -C kernel olddefconfig
+          make -C kernel prepare
+
+      - name: Build r8152.ko
+        run: |
+          export ARCH=arm64
+          export PATH=$GITHUB_WORKSPACE/toolchain/clang-r416183b/bin:$PATH
+          export CC=clang
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-android-
+          export LLVM=1
+          export LLVM_IAS=1
+          make -C kernel M=$GITHUB_WORKSPACE/r8152 modules
+
+      - name: Upload r8152.ko
+        uses: actions/upload-artifact@v4
+        with:
+          name: r8152-ko
+          path: r8152/r8152.ko
